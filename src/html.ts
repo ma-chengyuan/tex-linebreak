@@ -12,6 +12,8 @@ import { textNodesInRange } from './util/range';
 import DOMTextMeasurer from './util/dom-text-measurer';
 
 const NODE_TAG = 'insertedByTexLinebreak';
+const CJK =
+  '\u2e80-\u2eff\u2f00-\u2fdf\u3040-\u309f\u30a0-\u30fa\u30fc-\u30ff\u3100-\u312f\u3200-\u32ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3002\uff1b\uff0c\uff1a\u201c\u201d\uff08\uff09\u3001\uff1f\u300a\u300b';
 
 interface NodeOffset {
   node: Node;
@@ -40,8 +42,10 @@ function addItemsForTextNode(
   const shrink = Math.max(0, spaceWidth - 3);
   const hyphenWidth = measureFn(el, '-');
   const isSpace = (word: string) => /\s/.test(word.charAt(0));
+  const cjk = new RegExp(`[${CJK}]`);
+  const isCJK = (word: string) => cjk.test(word.charAt(0));
 
-  const chunks = text.split(/(\s+)/).filter((w) => w.length > 0);
+  const chunks = text.split(new RegExp(`(\\s+|[${CJK}])`)).filter((w) => w.length > 0);
   let textOffset = 0;
 
   chunks.forEach((w) => {
@@ -57,6 +61,29 @@ function addItemsForTextNode(
       };
       items.push(glue);
       textOffset += w.length;
+      return;
+    }
+
+    if (isCJK(w)) {
+      const box: DOMBox = {
+        type: 'box',
+        width: measureFn(el, w),
+        node,
+        start: textOffset,
+        end: textOffset + w.length,
+      };
+      items.push(box);
+      textOffset += w.length;
+      const glue: DOMGlue = {
+        type: 'glue',
+        width: 0,
+        shrink: 0.1,
+        stretch: 0.1,
+        node,
+        start: textOffset,
+        end: textOffset,
+      };
+      items.push(glue);
       return;
     }
 
@@ -119,7 +146,7 @@ function addItemsForElement(
     borderRightWidth,
   } = getComputedStyle(element);
 
-  if (display === 'inline') {
+  if (display === 'inline' && element.tagName !== 'IMG') {
     // Add box for margin/border/padding at start of box.
     const leftMargin =
       parseFloat(marginLeft!) + parseFloat(borderLeftWidth!) + parseFloat(paddingLeft!);
@@ -212,7 +239,7 @@ function lineWidthsAndGlueCounts(items: InputItem[], breakpoints: number[]) {
       const item = items[p];
       if (item.type === 'box') {
         actualWidth += item.width;
-      } else if (item.type === 'glue' && p !== start && p !== breakpoints[b + 1]) {
+      } else if (item.type === 'glue' && p !== start && p !== breakpoints[b + 1] && item.width !== 0) {
         actualWidth += item.width;
         ++glueCount;
       } else if (item.type === 'penalty' && p === breakpoints[b + 1]) {
